@@ -133,14 +133,32 @@ static void advance(Parser *p) { p->cur = next_token(&p->lx); }
 // Only the FIRST error is kept, because the output shows only the first error.
 static void fail(Parser *p, size_t pos) { if (p->err_pos == 0) p->err_pos = pos; }
 
-// primary := NUMBER
+// parse_primary needs parse_expr (for parentheses), but parse_expr is defined
+// further down, so we declare it here first.
+static long long parse_expr(Parser *p);
+
+// primary := NUMBER | '(' expr ')'
 // Why errors are reported here: when an operand is expected but something else
 // comes, the token we are looking at is exactly where we "could not continue".
 // So "10 + - 3" fails at the second operator, "3 +\n" at the '\n',
-// "-5" at the '-' (no unary minus), and an invalid char at that char.
+// "-5" at the '-' (no unary minus), "2 * ()" at the ')',
+// and an invalid char at that char.
 static long long parse_primary(Parser *p) {
     if (p->cur.type == TOK_NUM) {
         long long v = p->cur.ival;
+        advance(p);
+        return v;
+    }
+    if (p->cur.type == TOK_LPAREN) {
+        advance(p);
+        // Parentheses start again from the lowest level (expr), so the inside
+        // is fully computed first. Nesting is just this function calling
+        // parse_expr again, so deep nesting (1000 levels) works too.
+        long long v = parse_expr(p);
+        if (p->err_pos) return 0;
+        // Now we need ')'. If something else comes (usually the '\n' or the
+        // end of file), that token is where we got stuck: "(2 + 3\n" -> '\n'.
+        if (p->cur.type != TOK_RPAREN) { fail(p, p->cur.pos); return 0; }
         advance(p);
         return v;
     }
@@ -195,8 +213,8 @@ static int parse_line(Parser *p, long long *out) {
     *out = parse_expr(p);
     if (p->err_pos) return 0;
 
-    // After a full expression only the end of the line may follow.
-    // Anything else ("2 3", "2 & 5") is an error at that token.
+       // After a full expression only the end of the line may follow.
+    // Anything else ("2 3", "2 & 5", an extra ')') is an error at that token.
     if (p->cur.type == TOK_NEWLINE) advance(p);
     else if (p->cur.type != TOK_END) { fail(p, p->cur.pos); return 0; }
     return 1;
