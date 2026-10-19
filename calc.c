@@ -148,15 +148,39 @@ static long long parse_primary(Parser *p) {
     return 0;
 }
 
-// expr := primary { ('+' | '-') primary }
+// term := primary { ('*' | '/') primary }
+// Why precedence works: parse_expr calls parse_term for each operand, so
+// "2 * 5" is fully computed before + or - can use it: 3 + 2 * 5 = 3 + (2 * 5).
+// The loop makes * and / left-associative: 100 / 7 / 2 = (100 / 7) / 2.
+static long long parse_term(Parser *p) {
+    long long left = parse_primary(p);
+    while (!p->err_pos && (p->cur.type == TOK_STAR || p->cur.type == TOK_SLASH)) {
+        TokType op = p->cur.type;
+        advance(p);
+        // Division by zero is reported at the start of the right operand,
+        // so we remember where it starts before parsing it.
+        size_t right_pos = p->cur.pos;
+        long long right = parse_primary(p);
+        if (p->err_pos) break;
+        if (op == TOK_STAR) {
+            left *= right;
+        } else {
+            if (right == 0) { fail(p, right_pos); break; }
+            left /= right;   // C's int division truncates toward zero, as required
+        }
+    }
+    return left;
+}
+
+// expr := term { ('+' | '-') term }
 // The loop combines from left to right, so + and - are left-associative:
 // 10 - 3 - 2 = (10 - 3) - 2 = 5.
 static long long parse_expr(Parser *p) {
-    long long left = parse_primary(p);
+    long long left = parse_term(p); 
     while (!p->err_pos && (p->cur.type == TOK_PLUS || p->cur.type == TOK_MINUS)) {
         TokType op = p->cur.type;
         advance(p);
-        long long right = parse_primary(p);
+        long long right = parse_term(p);
         if (op == TOK_PLUS) left += right;
         else                left -= right;
     }
