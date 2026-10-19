@@ -7,6 +7,16 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+#include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
+
+// Student data for output file and folder names (lowercase, like the examples).
+// Kept in one place so it is easy to change.
+#define STUDENT_NAME     "mehmet_arslan"
+#define STUDENT_LASTNAME "vatan"
+#define STUDENT_ID       "251aib047"
+
 // AI (Claude): prompt "C labwork step 2: read the whole input file into memory" Link: <LINK>
 // Why one buffer: we find the size first, allocate once and read once,
 // so even multi-MB files are never copied repeatedly.
@@ -168,20 +178,100 @@ static int parse_line(Parser *p, long long *out) {
     return 1;
 }
 
-// Temporary main, only to test the parser. Will be replaced later.
-int main(int argc, char **argv) {
-    if (argc < 2) return 1;
-    size_t len;
-    char *text = read_file(argv[1], &len);
-    if (!text) { fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
+// AI (Claude): prompt "C labwork step 5: collect results and write the output file" Link: <LINK>
+// Growing text buffer for the results. When it is full, its size is doubled.
+// Doubling keeps the total copying proportional to the output size
+// (instead of copying on every append), so very large files stay fast.
+typedef struct { char *data; size_t len, cap; } OutBuf;
 
+static void out_append(OutBuf *o, const char *s, size_t n) {
+    if (o->len + n > o->cap) {
+        size_t cap = o->cap ? o->cap : 4096;
+        while (o->len + n > cap) cap *= 2;
+        char *d = realloc(o->data, cap);
+        if (!d) { fprintf(stderr, "out of memory\n"); exit(1); }
+        o->data = d;
+        o->cap = cap;
+    }
+    memcpy(o->data + o->len, s, n);
+    o->len += n;
+}
+
+// Evaluates the whole file, one result per line into out.
+// If any error occurs, the collected results are dropped and only
+// "ERROR:<pos>" is kept, because the rules forbid partial results.
+static void evaluate(const char *text, size_t len, OutBuf *out) {
     Parser p = { { text, len, 0 }, {0}, 0 };
     advance(&p);    // load the first token
     while (p.cur.type != TOK_END && !p.err_pos) {
         long long v;
-        if (parse_line(&p, &v)) printf("%lld\n", v);
+        if (parse_line(&p, &v)) {
+            char num[32];
+            int n = snprintf(num, sizeof num, "%lld\n", v);
+            out_append(out, num, (size_t)n);
+        }
     }
-    if (p.err_pos) printf("ERROR:%zu\n", p.err_pos);
+    if (p.err_pos) {
+        out->len = 0;   // forget the partial results
+        char msg[48];
+        int n = snprintf(msg, sizeof msg, "ERROR:%zu\n", p.err_pos);
+        out_append(out, msg, (size_t)n);
+    }
+}
+
+// Builds "<outdir>/<base>_<name>_<lastname>_<id>.txt", where <base> is the
+// input file name without its folders and without ".txt".
+static char *make_output_path(const char *outdir, const char *input) {
+    const char *base = strrchr(input, '/');      // last '/' in the path
+    base = base ? base + 1 : input;
+    size_t blen = strlen(base);
+    if (blen >= 4 && strcmp(base + blen - 4, ".txt") == 0) blen -= 4;
+
+    size_t size = strlen(outdir) + blen + 100;   // 100 = room for names + ".txt"
+    char *path = malloc(size);
+    if (!path) return NULL;
+    snprintf(path, size, "%s/%.*s_%s_%s_%s.txt", outdir, (int)blen, base,
+             STUDENT_NAME, STUDENT_LASTNAME, STUDENT_ID);
+    return path;
+}
+
+// Creates the folder. If it already exists, that is fine: we write into it.
+static int ensure_dir(const char *dir) {
+    return mkdir(dir, 0777) == 0 || errno == EEXIST;
+}
+
+static int write_file(const char *path, const char *data, size_t len) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    size_t written = (len > 0) ? fwrite(data, 1, len, f) : 0;
+    return fclose(f) == 0 && written == len;
+}
+
+// Temporary main: only "calc -o OUTDIR input.txt" for now.
+// The full command line (-d, default folder, ...) comes in a later step.
+int main(int argc, char **argv) {
+    if (argc != 4 || strcmp(argv[1], "-o") != 0) {
+        fprintf(stderr, "usage: calc -o OUTDIR input.txt\n");
+        return 1;
+    }
+    const char *outdir = argv[2];
+    const char *input  = argv[3];
+
+    size_t len;
+    char *text = read_file(input, &len);
+    if (!text) { fprintf(stderr, "cannot read %s\n", input); return 1; }
+
+    OutBuf out = {0};
+    evaluate(text, len, &out);
     free(text);
-    return 0;
+
+    int rc = 0;
+    char *path = make_output_path(outdir, input);
+    if (!path || !ensure_dir(outdir) || !write_file(path, out.data, out.len)) {
+        fprintf(stderr, "cannot write output for %s\n", input);
+        rc = 1;
+    }
+    free(path);
+    free(out.data);
+    return rc;
 }
