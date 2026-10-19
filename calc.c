@@ -63,12 +63,22 @@ typedef struct {
     const char *text;
     size_t len;
     size_t i;
+    int line_start;   // 1 if only spaces/tabs were seen since the last '\n'
 } Lexer;
 
 static Token next_token(Lexer *lx) {
     // Spaces and tabs only separate tokens, so skip them.
     while (lx->text[lx->i] == ' ' || lx->text[lx->i] == '\t')
         lx->i++;
+    // '#' is a comment only if it is the first non-blank char of the line.
+    // We skip up to the '\n' (but not past it), so the line looks blank to
+    // the parser. The skipped chars still move i, so they count in positions.
+    // A '#' anywhere else falls through to the switch and becomes invalid.
+    if (lx->line_start && lx->text[lx->i] == '#') {
+        while (lx->i < lx->len && lx->text[lx->i] != '\n')
+            lx->i++;
+    }
+    lx->line_start = 0;   // any token we return now is no longer at line start
 
     Token t = {0};
     t.pos = lx->i + 1;
@@ -110,7 +120,7 @@ static Token next_token(Lexer *lx) {
         case '/':  t.type = TOK_SLASH;   break;
         case '(':  t.type = TOK_LPAREN;  break;
         case ')':  t.type = TOK_RPAREN;  break;
-        case '\n': t.type = TOK_NEWLINE; break;
+        case '\n': t.type = TOK_NEWLINE; lx->line_start = 1; break;
         case '*':
             // Look one char ahead: "**" is power, a single '*' is multiply.
             if (lx->text[lx->i] == '*') { lx->i++; t.type = TOK_POW; }
@@ -273,7 +283,7 @@ static void out_append(OutBuf *o, const char *s, size_t n) {
 // If any error occurs, the collected results are dropped and only
 // "ERROR:<pos>" is kept, because the rules forbid partial results.
 static void evaluate(const char *text, size_t len, OutBuf *out) {
-    Parser p = { { text, len, 0 }, {0}, 0 };
+    Parser p = { { text, len, 0, 1 }, {0}, 0 };   // 1 = file starts at a line start
     advance(&p);    // load the first token
     while (p.cur.type != TOK_END && !p.err_pos) {
         long long v;
