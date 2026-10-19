@@ -149,6 +149,7 @@ static long long parse_primary(Parser *p) {
         advance(p);
         return v;
     }
+
     if (p->cur.type == TOK_LPAREN) {
         advance(p);
         // Parentheses start again from the lowest level (expr), so the inside
@@ -166,19 +167,48 @@ static long long parse_primary(Parser *p) {
     return 0;
 }
 
-// term := primary { ('*' | '/') primary }
+// power := primary [ '**' power ]
+// Why ** is right-associative: for the exponent we call parse_power itself
+// (recursion) instead of looping, so the right side is grouped first: 
+// 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2 ** 9 = 512.
+// It is the highest level, so 2 * 3 ** 2 = 2 * (3 ** 2).
+static long long parse_power(Parser *p) {
+    long long base = parse_primary(p);
+    if (p->err_pos || p->cur.type != TOK_POW) return base;
+    advance(p);
+    // A negative exponent is reported at the start of the exponent,
+    // so we remember where it starts before parsing it.
+    size_t exp_pos = p->cur.pos;
+    long long e = parse_power(p);
+    if (p->err_pos) return 0;
+    if (e < 0) { fail(p, exp_pos); return 0; }
+
+    // Fast power (square-and-multiply): about log2(e) steps instead of e
+    // steps, so even "1 ** 1000000000000" is instant. x ** 0 = 1, also 0 ** 0.
+    // We only square the base when another step follows, so we never
+    // compute a value bigger than the final result (no overflow).
+    long long result = 1;
+    while (e > 0) {
+        if (e & 1) result *= base;   // this bit of the exponent is 1
+        e >>= 1;                     // move to the next bit
+        if (e > 0) base *= base;     // base, base^2, base^4, base^8, ...
+    }
+    return result;
+}
+
+// term := power { ('*' | '/') power }
 // Why precedence works: parse_expr calls parse_term for each operand, so
 // "2 * 5" is fully computed before + or - can use it: 3 + 2 * 5 = 3 + (2 * 5).
 // The loop makes * and / left-associative: 100 / 7 / 2 = (100 / 7) / 2.
 static long long parse_term(Parser *p) {
-    long long left = parse_primary(p);
+   long long left = parse_power(p); 
     while (!p->err_pos && (p->cur.type == TOK_STAR || p->cur.type == TOK_SLASH)) {
         TokType op = p->cur.type;
         advance(p);
         // Division by zero is reported at the start of the right operand,
         // so we remember where it starts before parsing it.
         size_t right_pos = p->cur.pos;
-        long long right = parse_primary(p);
+        long long right = parse_power(p);
         if (p->err_pos) break;
         if (op == TOK_STAR) {
             left *= right;
