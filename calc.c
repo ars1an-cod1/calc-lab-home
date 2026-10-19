@@ -19,7 +19,7 @@
 #define STUDENT_LASTNAME "vatan"
 #define STUDENT_ID       "251aib047"
 
-// AI (Claude): prompt "C labwork step 2: read the whole input file into memory" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 2: read the whole input file into memory Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Why one buffer: we find the size first, allocate once and read once,
 // so even multi-MB files are never copied repeatedly.
 // "rb" (binary mode) keeps every byte as-is, so positions match the file exactly.
@@ -43,7 +43,7 @@ static char *read_file(const char *path, size_t *out_len) {
     return buf;
 }
 
-// AI (Claude): prompt "C labwork step 3: tokenizer that tracks positions" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 3: tokenizer that tracks positions Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 typedef enum {
     TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_POW,
     TOK_LPAREN, TOK_RPAREN, TOK_NEWLINE, TOK_END, TOK_INVALID
@@ -133,8 +133,7 @@ static Token next_token(Lexer *lx) {
     return t;
 }
 
-
-// AI (Claude): prompt "C labwork step 4: recursive descent parser, + and -" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 4: recursive descent parser, + and - Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 typedef struct {
     Lexer lx;
     Token cur;        // the token the parser is looking at right now
@@ -146,8 +145,7 @@ static void advance(Parser *p) { p->cur = next_token(&p->lx); }
 
 // Only the FIRST error is kept, because the output shows only the first error.
 static void fail(Parser *p, size_t pos) { if (p->err_pos == 0) p->err_pos = pos; }
-
-// AI (Claude): prompt "C labwork step 10: floats, int vs float arithmetic" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 10: floats, int vs float arithmetic Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // A value is either a 64-bit integer or a double; is_float says which one.
 typedef struct {
     int is_float;
@@ -313,8 +311,7 @@ static int parse_line(Parser *p, Value *out) {
     else if (p->cur.type != TOK_END) { fail(p, p->cur.pos); return 0; }
     return 1;
 }
-
-// AI (Claude): prompt "C labwork step 5: collect results and write the output file" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 5: collect results and write the output file Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Growing text buffer for the results. When it is full, its size is doubled.
 // Doubling keeps the total copying proportional to the output size
 // (instead of copying on every append), so very large files stay fast.
@@ -396,7 +393,7 @@ static int write_file(const char *path, const char *data, size_t len) {
     size_t written = (len > 0) ? fwrite(data, 1, len, f) : 0;
     return fclose(f) == 0 && written == len;
 }
-// AI (Claude): prompt "C labwork step 9: full command line, -d, default folder, exit codes" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// AI (Claude): code written by Claude in conversation step 9: full command line, -d, default folder, exit codes  Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Evaluates one input file and writes its result file into outdir.
 // Returns 0 on success, 1 if the input cannot be read or the output written.
 // An "ERROR:<pos>" result is a normal result, so it still returns 0.
