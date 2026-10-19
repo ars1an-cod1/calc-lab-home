@@ -21,7 +21,7 @@ Mehmet Arslan Vatan (251AIB047)
 
 ## AI usage
 
-I used **Claude (Anthropic)** for this lab. The full conversation is here: <LINK>
+I used **Claude (Anthropic)** for this lab. The full conversation is here: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 
 - The conversation is in **Turkish** (my native language). Code and comments are in English.
 - We worked step by step, following the grade table (4 → 10):
