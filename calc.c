@@ -235,20 +235,22 @@ static Value parse_primary(Parser *p) {
     return make_int(0);
 }
 
-// power := primary [ '**' power ]
-// Why ** is right-associative: for the exponent we call parse_power itself
-// (recursion) instead of looping, so the right side is grouped first:
-// 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2 ** 9 = 512.
+// power := primary { '**' primary }   (grouped from the right)
+// Why ** is right-associative: we first collect all operands of a chain like
+// a ** b ** c, then combine them starting from the END: b ** c first, then
+// a ** (that result). So 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2 ** 9 = 512.
+// Why a loop instead of recursion: a line may hold a huge chain like
+// "1 ** 1 ** 1 ** ...". Recursion would use one stack frame per '**' and
+// crash; the array lives on the heap and just grows (doubling, like OutBuf).
 // It is the highest level, so 2 * 3 ** 2 = 2 * (3 ** 2).
-static Value parse_power(Parser *p) {
-    Value base = parse_primary(p);
-    if (p->err_pos || p->cur.type != TOK_POW) return base;
-    size_t op_pos = p->cur.pos;     // for an infinite/NaN float result
-    advance(p);
-    size_t exp_pos = p->cur.pos;    // for a negative integer exponent
-    Value e = parse_power(p);
-    if (p->err_pos) return e;
+typedef struct {
+    Value v;          // the operand
+    size_t start;     // where this operand starts (negative exponent error)
+    size_t op_pos;    // where the '**' after it is (inf/NaN error)
+} PowItem;
 
+// Computes base ** e. op_pos is the '**', exp_pos the start of the exponent.
+static Value pow_step(Parser *p, Value base, Value e, size_t op_pos, size_t exp_pos) {
     if (!base.is_float && !e.is_float) {
         // int ** int stays an integer, so a negative exponent is an error
         // (the result would be a fraction), reported at the exponent.
@@ -260,6 +262,44 @@ static Value parse_power(Parser *p) {
     double r = pow(as_double(base), as_double(e));
     if (!isfinite(r)) { fail(p, op_pos); return e; }
     return make_float(r);
+}
+
+static Value parse_power(Parser *p) {
+    Value first = parse_primary(p);
+    // Most operands have no '**' after them: return at once, no array needed.
+    if (p->err_pos || p->cur.type != TOK_POW) return first;
+
+    size_t n = 1, cap = 8;
+    PowItem *items = malloc(cap * sizeof *items);
+    if (!items) { fprintf(stderr, "out of memory\n"); exit(1); }
+    items[0].v = first;
+    items[0].start = 0;   // not used: the first operand is never an exponent
+
+    // Step 1: collect the operands a, b, c, ... and the '**' positions.
+    while (p->cur.type == TOK_POW) {
+        items[n - 1].op_pos = p->cur.pos;
+        advance(p);
+        if (n == cap) {
+            cap *= 2;
+            PowItem *bigger = realloc(items, cap * sizeof *items);
+            if (!bigger) { fprintf(stderr, "out of memory\n"); exit(1); }
+            items = bigger;
+        }
+        items[n].start = p->cur.pos;
+        items[n].v = parse_primary(p);
+        n++;
+        if (p->err_pos) { free(items); return first; }
+    }
+
+    // Step 2: combine from the right. The exponent of items[k-1] is everything
+    // after its '**', which starts where items[k] starts.
+    Value result = items[n - 1].v;
+    for (size_t k = n - 1; k > 0; k--) {
+        result = pow_step(p, items[k - 1].v, result, items[k - 1].op_pos, items[k].start);
+        if (p->err_pos) break;
+    }
+    free(items);
+    return result;
 }
 
 // term := power { ('*' | '/') power }
