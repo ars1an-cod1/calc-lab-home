@@ -111,20 +111,77 @@ static Token next_token(Lexer *lx) {
     return t;
 }
 
-// Temporary main, only to test read_file. Will be replaced later.
+// AI (Claude): prompt "C labwork step 4: recursive descent parser, + and -" Link: <LINK>
+typedef struct {
+    Lexer lx;
+    Token cur;        // the token the parser is looking at right now
+    size_t err_pos;   // 0 = no error yet, otherwise position of the first error
+} Parser;
 
+static void advance(Parser *p) { p->cur = next_token(&p->lx); }
+
+// Only the FIRST error is kept, because the output shows only the first error.
+static void fail(Parser *p, size_t pos) { if (p->err_pos == 0) p->err_pos = pos; }
+
+// primary := NUMBER
+// Why errors are reported here: when an operand is expected but something else
+// comes, the token we are looking at is exactly where we "could not continue".
+// So "10 + - 3" fails at the second operator, "3 +\n" at the '\n',
+// "-5" at the '-' (no unary minus), and an invalid char at that char.
+static long long parse_primary(Parser *p) {
+    if (p->cur.type == TOK_NUM) {
+        long long v = p->cur.ival;
+        advance(p);
+        return v;
+    }
+    fail(p, p->cur.pos);
+    return 0;
+}
+
+// expr := primary { ('+' | '-') primary }
+// The loop combines from left to right, so + and - are left-associative:
+// 10 - 3 - 2 = (10 - 3) - 2 = 5.
+static long long parse_expr(Parser *p) {
+    long long left = parse_primary(p);
+    while (!p->err_pos && (p->cur.type == TOK_PLUS || p->cur.type == TOK_MINUS)) {
+        TokType op = p->cur.type;
+        advance(p);
+        long long right = parse_primary(p);
+        if (op == TOK_PLUS) left += right;
+        else                left -= right;
+    }
+    return left;
+}
+
+// Parses one line. Returns 1 and stores the result in *out if the line had an
+// expression, 0 if it was blank or had an error (then err_pos is set).
+static int parse_line(Parser *p, long long *out) {
+    if (p->cur.type == TOK_NEWLINE) { advance(p); return 0; }   // blank line
+
+    *out = parse_expr(p);
+    if (p->err_pos) return 0;
+
+    // After a full expression only the end of the line may follow.
+    // Anything else ("2 3", "2 & 5") is an error at that token.
+    if (p->cur.type == TOK_NEWLINE) advance(p);
+    else if (p->cur.type != TOK_END) { fail(p, p->cur.pos); return 0; }
+    return 1;
+}
+
+// Temporary main, only to test the parser. Will be replaced later.
 int main(int argc, char **argv) {
     if (argc < 2) return 1;
     size_t len;
     char *text = read_file(argv[1], &len);
     if (!text) { fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
 
-    Lexer lx = { text, len, 0 };
-    for (;;) {
-        Token t = next_token(&lx);
-        printf("pos %zu  type %d\n", t.pos, t.type);
-        if (t.type == TOK_END) break;
+    Parser p = { { text, len, 0 }, {0}, 0 };
+    advance(&p);    // load the first token
+    while (p.cur.type != TOK_END && !p.err_pos) {
+        long long v;
+        if (parse_line(&p, &v)) printf("%lld\n", v);
     }
+    if (p.err_pos) printf("ERROR:%zu\n", p.err_pos);
     free(text);
     return 0;
 }
