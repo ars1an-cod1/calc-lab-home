@@ -1,11 +1,12 @@
 // Mehmet Arslan Vatan 251AIB047
 // (optional) https://github.com/ars1an-cod1/calc-lab-home
 // Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c -lm
-// Resources used: Claude (Anthropic) AI assistant, conversation: <LINK> — details in comments where used
+// Resources used: Claude (Anthropic) AI assistant, conversation: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f> — details in comments where used
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <math.h>
 
 #include <string.h>
 #include <errno.h>
@@ -18,7 +19,7 @@
 #define STUDENT_LASTNAME "vatan"
 #define STUDENT_ID       "251aib047"
 
-// AI (Claude): prompt "C labwork step 2: read the whole input file into memory" Link: <LINK>
+// AI (Claude): prompt "C labwork step 2: read the whole input file into memory" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Why one buffer: we find the size first, allocate once and read once,
 // so even multi-MB files are never copied repeatedly.
 // "rb" (binary mode) keeps every byte as-is, so positions match the file exactly.
@@ -42,7 +43,7 @@ static char *read_file(const char *path, size_t *out_len) {
     return buf;
 }
 
-// AI (Claude): prompt "C labwork step 3: tokenizer that tracks positions" Link: <LINK>
+// AI (Claude): prompt "C labwork step 3: tokenizer that tracks positions" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 typedef enum {
     TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_POW,
     TOK_LPAREN, TOK_RPAREN, TOK_NEWLINE, TOK_END, TOK_INVALID
@@ -132,7 +133,8 @@ static Token next_token(Lexer *lx) {
     return t;
 }
 
-// AI (Claude): prompt "C labwork step 4: recursive descent parser, + and -" Link: <LINK>
+
+// AI (Claude): prompt "C labwork step 4: recursive descent parser, + and -" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 typedef struct {
     Lexer lx;
     Token cur;        // the token the parser is looking at right now
@@ -141,63 +143,58 @@ typedef struct {
 
 static void advance(Parser *p) { p->cur = next_token(&p->lx); }
 
+
 // Only the FIRST error is kept, because the output shows only the first error.
 static void fail(Parser *p, size_t pos) { if (p->err_pos == 0) p->err_pos = pos; }
 
-// parse_primary needs parse_expr (for parentheses), but parse_expr is defined
-// further down, so we declare it here first.
-static long long parse_expr(Parser *p);
+// AI (Claude): prompt "C labwork step 10: floats, int vs float arithmetic" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
+// A value is either a 64-bit integer or a double; is_float says which one.
+typedef struct {
+    int is_float;
+    long long i;
+    double f;
+} Value;
 
-// primary := NUMBER | '(' expr ')'
-// Why errors are reported here: when an operand is expected but something else
-// comes, the token we are looking at is exactly where we "could not continue".
-// So "10 + - 3" fails at the second operator, "3 +\n" at the '\n',
-// "-5" at the '-' (no unary minus), "2 * ()" at the ')',
-// and an invalid char at that char.
-static long long parse_primary(Parser *p) {
-    if (p->cur.type == TOK_NUM) {
-        long long v = p->cur.ival;
-        advance(p);
-        return v;
-    }
+static Value make_int(long long x)  { Value v = { 0, x, 0.0 }; return v; }
+static Value make_float(double x)   { Value v = { 1, 0, x };   return v; }
+static double as_double(Value v)    { return v.is_float ? v.f : (double)v.i; }
 
-    if (p->cur.type == TOK_LPAREN) {
-        advance(p);
-        // Parentheses start again from the lowest level (expr), so the inside
-        // is fully computed first. Nesting is just this function calling
-        // parse_expr again, so deep nesting (1000 levels) works too.
-        long long v = parse_expr(p);
-        if (p->err_pos) return 0;
-        // Now we need ')'. If something else comes (usually the '\n' or the
-        // end of file), that token is where we got stuck: "(2 + 3\n" -> '\n'.
-        if (p->cur.type != TOK_RPAREN) { fail(p, p->cur.pos); return 0; }
-        advance(p);
-        return v;
+// How int vs float is decided: if either operand is a float, the operation is
+// done in double (7 / 2.0 = 3.5). Only int with int stays an integer
+// (7 / 2 = 3, truncated toward zero like C).
+// Errors: division by zero is reported at the start of the right operand
+// (right_pos); a float result that is infinite or NaN at the operator (op_pos).
+static Value apply(Parser *p, TokType op, Value a, Value b,
+                   size_t op_pos, size_t right_pos) {
+    if (!a.is_float && !b.is_float) {
+        switch (op) {
+            case TOK_PLUS:  return make_int(a.i + b.i);
+            case TOK_MINUS: return make_int(a.i - b.i);
+            case TOK_STAR:  return make_int(a.i * b.i);
+            default:
+                if (b.i == 0) { fail(p, right_pos); return make_int(0); }
+                return make_int(a.i / b.i);
+        }
     }
-    fail(p, p->cur.pos);
-    return 0;
+    double x = as_double(a), y = as_double(b), r;
+    switch (op) {
+        case TOK_PLUS:  r = x + y; break;
+        case TOK_MINUS: r = x - y; break;
+        case TOK_STAR:  r = x * y; break;
+        default:
+            if (y == 0.0) { fail(p, right_pos); return make_int(0); }
+            r = x / y;
+            break;
+    }
+    if (!isfinite(r)) { fail(p, op_pos); return make_int(0); }
+    return make_float(r);
 }
 
-// power := primary [ '**' power ]
-// Why ** is right-associative: for the exponent we call parse_power itself
-// (recursion) instead of looping, so the right side is grouped first: 
-// 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2 ** 9 = 512.
-// It is the highest level, so 2 * 3 ** 2 = 2 * (3 ** 2).
-static long long parse_power(Parser *p) {
-    long long base = parse_primary(p);
-    if (p->err_pos || p->cur.type != TOK_POW) return base;
-    advance(p);
-    // A negative exponent is reported at the start of the exponent,
-    // so we remember where it starts before parsing it.
-    size_t exp_pos = p->cur.pos;
-    long long e = parse_power(p);
-    if (p->err_pos) return 0;
-    if (e < 0) { fail(p, exp_pos); return 0; }
-
-    // Fast power (square-and-multiply): about log2(e) steps instead of e
-    // steps, so even "1 ** 1000000000000" is instant. x ** 0 = 1, also 0 ** 0.
-    // We only square the base when another step follows, so we never
-    // compute a value bigger than the final result (no overflow).
+// Fast integer power (square-and-multiply): about log2(e) steps instead of e
+// steps, so even "1 ** 1000000000000" is instant. x ** 0 = 1, also 0 ** 0.
+// We only square the base when another step follows, so we never compute a
+// value bigger than the final result (no overflow).
+static long long int_pow(long long base, long long e) {
     long long result = 1;
     while (e > 0) {
         if (e & 1) result *= base;   // this bit of the exponent is 1
@@ -207,26 +204,80 @@ static long long parse_power(Parser *p) {
     return result;
 }
 
+// parse_primary needs parse_expr (for parentheses), but parse_expr is defined
+// further down, so we declare it here first.
+static Value parse_expr(Parser *p);
+
+// primary := NUMBER | '(' expr ')'
+// Why errors are reported here: when an operand is expected but something else
+// comes, the token we are looking at is exactly where we "could not continue".
+// So "10 + - 3" fails at the second operator, "3 +\n" at the '\n',
+// "-5" at the '-' (no unary minus), "2 * ()" at the ')',
+// and an invalid char at that char.
+static Value parse_primary(Parser *p) {
+    if (p->cur.type == TOK_NUM) {
+        Value v = p->cur.is_float ? make_float(p->cur.fval) : make_int(p->cur.ival);
+        advance(p);
+        return v;
+    }
+    if (p->cur.type == TOK_LPAREN) {
+        advance(p);
+        // Parentheses start again from the lowest level (expr), so the inside
+        // is fully computed first. Nesting is just this function calling
+        // parse_expr again, so deep nesting (1000 levels) works too.
+        Value v = parse_expr(p);
+        if (p->err_pos) return v;
+        // Now we need ')'. If something else comes (usually the '\n' or the
+        // end of file), that token is where we got stuck: "(2 + 3\n" -> '\n'.
+        if (p->cur.type != TOK_RPAREN) { fail(p, p->cur.pos); return v; }
+        advance(p);
+        return v;
+    }
+    fail(p, p->cur.pos);
+    return make_int(0);
+}
+
+// power := primary [ '**' power ]
+// Why ** is right-associative: for the exponent we call parse_power itself
+// (recursion) instead of looping, so the right side is grouped first:
+// 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2 ** 9 = 512.
+// It is the highest level, so 2 * 3 ** 2 = 2 * (3 ** 2).
+static Value parse_power(Parser *p) {
+    Value base = parse_primary(p);
+    if (p->err_pos || p->cur.type != TOK_POW) return base;
+    size_t op_pos = p->cur.pos;     // for an infinite/NaN float result
+    advance(p);
+    size_t exp_pos = p->cur.pos;    // for a negative integer exponent
+    Value e = parse_power(p);
+    if (p->err_pos) return e;
+
+    if (!base.is_float && !e.is_float) {
+        // int ** int stays an integer, so a negative exponent is an error
+        // (the result would be a fraction), reported at the exponent.
+        if (e.i < 0) { fail(p, exp_pos); return e; }
+        return make_int(int_pow(base.i, e.i));
+    }
+    // With a float, pow() decides: 0.5 ** (0 - 1) = 2 is fine,
+    // but (0 - 8) ** 0.5 is NaN and 10.0 ** 400 is infinite -> error at '**'.
+    double r = pow(as_double(base), as_double(e));
+    if (!isfinite(r)) { fail(p, op_pos); return e; }
+    return make_float(r);
+}
+
 // term := power { ('*' | '/') power }
 // Why precedence works: parse_expr calls parse_term for each operand, so
 // "2 * 5" is fully computed before + or - can use it: 3 + 2 * 5 = 3 + (2 * 5).
 // The loop makes * and / left-associative: 100 / 7 / 2 = (100 / 7) / 2.
-static long long parse_term(Parser *p) {
-   long long left = parse_power(p); 
+static Value parse_term(Parser *p) {
+    Value left = parse_power(p);
     while (!p->err_pos && (p->cur.type == TOK_STAR || p->cur.type == TOK_SLASH)) {
         TokType op = p->cur.type;
+        size_t op_pos = p->cur.pos;
         advance(p);
-        // Division by zero is reported at the start of the right operand,
-        // so we remember where it starts before parsing it.
-        size_t right_pos = p->cur.pos;
-        long long right = parse_power(p);
+        size_t right_pos = p->cur.pos;   // division by zero is reported here
+        Value right = parse_power(p);
         if (p->err_pos) break;
-        if (op == TOK_STAR) {
-            left *= right;
-        } else {
-            if (right == 0) { fail(p, right_pos); break; }
-            left /= right;   // C's int division truncates toward zero, as required
-        }
+        left = apply(p, op, left, right, op_pos, right_pos);
     }
     return left;
 }
@@ -234,34 +285,36 @@ static long long parse_term(Parser *p) {
 // expr := term { ('+' | '-') term }
 // The loop combines from left to right, so + and - are left-associative:
 // 10 - 3 - 2 = (10 - 3) - 2 = 5.
-static long long parse_expr(Parser *p) {
-    long long left = parse_term(p); 
+static Value parse_expr(Parser *p) {
+    Value left = parse_term(p);
     while (!p->err_pos && (p->cur.type == TOK_PLUS || p->cur.type == TOK_MINUS)) {
         TokType op = p->cur.type;
+        size_t op_pos = p->cur.pos;
         advance(p);
-        long long right = parse_term(p);
-        if (op == TOK_PLUS) left += right;
-        else                left -= right;
+        size_t right_pos = p->cur.pos;
+        Value right = parse_term(p);
+        if (p->err_pos) break;
+        left = apply(p, op, left, right, op_pos, right_pos);
     }
     return left;
 }
 
 // Parses one line. Returns 1 and stores the result in *out if the line had an
 // expression, 0 if it was blank or had an error (then err_pos is set).
-static int parse_line(Parser *p, long long *out) {
+static int parse_line(Parser *p, Value *out) {
     if (p->cur.type == TOK_NEWLINE) { advance(p); return 0; }   // blank line
 
     *out = parse_expr(p);
     if (p->err_pos) return 0;
 
-       // After a full expression only the end of the line may follow.
+    // After a full expression only the end of the line may follow.
     // Anything else ("2 3", "2 & 5", an extra ')') is an error at that token.
     if (p->cur.type == TOK_NEWLINE) advance(p);
     else if (p->cur.type != TOK_END) { fail(p, p->cur.pos); return 0; }
     return 1;
 }
 
-// AI (Claude): prompt "C labwork step 5: collect results and write the output file" Link: <LINK>
+// AI (Claude): prompt "C labwork step 5: collect results and write the output file" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Growing text buffer for the results. When it is full, its size is doubled.
 // Doubling keeps the total copying proportional to the output size
 // (instead of copying on every append), so very large files stay fast.
@@ -287,10 +340,13 @@ static void evaluate(const char *text, size_t len, OutBuf *out) {
     Parser p = { { text, len, 0, 1 }, {0}, 0 };   // 1 = file starts at a line start
     advance(&p);    // load the first token
     while (p.cur.type != TOK_END && !p.err_pos) {
-        long long v;
+        Value v;
         if (parse_line(&p, &v)) {
-            char num[32];
-            int n = snprintf(num, sizeof num, "%lld\n", v);
+            char num[64];
+            int n;
+            // Printing: integers with %lld, floats with %.15g (so 1.25 * 4 -> 5).
+            if (v.is_float) n = snprintf(num, sizeof num, "%.15g\n", v.f);
+            else            n = snprintf(num, sizeof num, "%lld\n", v.i);
             out_append(out, num, (size_t)n);
         }
     }
@@ -340,7 +396,7 @@ static int write_file(const char *path, const char *data, size_t len) {
     size_t written = (len > 0) ? fwrite(data, 1, len, f) : 0;
     return fclose(f) == 0 && written == len;
 }
-// AI (Claude): prompt "C labwork step 9: full command line, -d, default folder, exit codes" Link: <LINK>
+// AI (Claude): prompt "C labwork step 9: full command line, -d, default folder, exit codes" Link: <https://claude.ai/share/0a6ae165-5bd1-45db-a6f0-42b6ac272f1f>
 // Evaluates one input file and writes its result file into outdir.
 // Returns 0 on success, 1 if the input cannot be read or the output written.
 // An "ERROR:<pos>" result is a normal result, so it still returns 0.
